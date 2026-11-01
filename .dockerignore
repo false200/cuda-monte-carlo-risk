@@ -1,0 +1,8 @@
+.git
+.cuda_pkgs
+.cache
+tmp
+build
+lambda_pkg
+**/__pycache__
+**/*.pyc

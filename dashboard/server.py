@@ -1,6 +1,7 @@
-"""Local dashboard for the CUDA Monte Carlo risk engine.
+"""Dashboard for the CUDA Monte Carlo risk engine.
 
-Binds to 127.0.0.1 only. Job files and results stay in this repository.
+Binds to 127.0.0.1 unless MC_HOST is set. On EC2, MC_HOST=0.0.0.0
+and the security group is what makes the public link work.
 """
 
 from __future__ import annotations
@@ -18,8 +19,8 @@ sys.path.insert(0, str(ROOT / "common"))
 
 import jobtext  # noqa: E402
 
-HOST = "127.0.0.1"
-PORT = 8765
+HOST = os.environ.get("MC_HOST", "127.0.0.1")
+PORT = int(os.environ.get("MC_PORT", "8765"))
 
 # us-east-1 Linux on-demand list prices, checked October 2026.
 # Published non-tensor FP32 peaks: T4 8.1 TFLOPS, A10G 31.2 TFLOPS.
@@ -80,6 +81,9 @@ def cloud_estimate(result: dict) -> dict:
 
 
 def engine_binary() -> Path:
+    override = os.environ.get("MC_ENGINE")
+    if override:
+        return Path(override)
     names = ("mc_engine.exe", "mc_engine") if os.name == "nt" else ("mc_engine", "mc_engine.exe")
     for name in names:
         path = ROOT / "build" / name
@@ -111,7 +115,9 @@ def engine_env() -> dict:
     nvrtc = find_nvrtc()
     if nvrtc is not None:
         env["NVRTC_PATH"] = str(nvrtc)
-    env["MC_KERNEL"] = str(ROOT / "kernels" / "mc_risk.cu")
+    kernel = ROOT / "kernels" / "mc_risk.cu"
+    if kernel.is_file():
+        env["MC_KERNEL"] = str(kernel)
     return env
 
 
@@ -192,7 +198,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     os.environ["PYTHONPYCACHEPREFIX"] = str(ROOT / ".cache" / "pyc")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Monte Carlo risk desk at http://{HOST}:{PORT}", flush=True)
+    print(f"Monte Carlo risk desk listening on {HOST}:{PORT}", flush=True)
     server.serve_forever()
 
 
