@@ -13,6 +13,7 @@ import sys
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "common"))
@@ -144,6 +145,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/sample":
             self._json(200, jobtext.sample_portfolio())
+            return
+        if path == "/api/random":
+            query = parse_qs(urlparse(self.path).query)
+            raw_paths = (query.get("paths") or [None])[0]
+            try:
+                paths = int(raw_paths) if raw_paths not in (None, "") else None
+                self._json(200, jobtext.random_portfolio(paths=paths))
+            except (ValueError, TypeError) as exc:
+                self._json(400, {"error": str(exc)})
             return
         self._json(404, {"error": "not found"})
 

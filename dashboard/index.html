@@ -146,7 +146,7 @@
 <header>
   <div>
     <h1>Monte Carlo <span>risk engine</span></h1>
-    <div class="sub">CUDA kernels price options and revalue a correlated book. Demo book loads and runs automatically (10 million scenarios by default).</div>
+    <div class="sub">CUDA kernels price options and revalue a correlated book. Each Run draws a new random book and seed (10 million scenarios by default).</div>
   </div>
   <div class="badge" id="gpu-badge">GPU idle</div>
 </header>
@@ -193,7 +193,7 @@
   </section>
   <section>
     <h2>Results</h2>
-    <div id="empty">Loading the demo book and running it on the GPU…</div>
+    <div id="empty">Drawing a random book and running it on the GPU…</div>
     <div id="results" hidden>
       <div class="cards" id="cards"></div>
       <div class="charts">
@@ -511,14 +511,24 @@ function show(result) {
     "<br><b>AWS path.</b> Dashboard → API Gateway → Lambda validates and writes S3 → Batch spot queue → g4dn or g5 runs this same engine in Docker.";
 }
 
+async function drawBook() {
+  const paths = state ? Number(document.getElementById("paths").value) : 10000000;
+  const res = await fetch("/api/random?paths=" + encodeURIComponent(paths));
+  const book = await res.json();
+  if (!res.ok) throw new Error(book.error || "could not draw a book");
+  state = book;
+  render();
+}
+
 async function runJob() {
-  scrape();
   const btn = document.getElementById("run");
   const status = document.getElementById("status");
   btn.disabled = true;
   status.className = "status";
-  status.textContent = `Running ${Number(state.paths).toLocaleString()} scenarios on the GPU…`;
+  status.textContent = "Drawing a new random book…";
   try {
+    await drawBook();
+    status.textContent = `Running ${Number(state.paths).toLocaleString()} scenarios on the GPU… seed ${state.seed}.`;
     const res = await fetch("/api/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -527,7 +537,7 @@ async function runJob() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "run failed");
     show(data);
-    status.textContent = `Finished in ${Number(data.timing.gpu_job_seconds).toFixed(2)} seconds on ${data.gpu.name}.`;
+    status.textContent = `Finished in ${Number(data.timing.gpu_job_seconds).toFixed(2)} seconds on ${data.gpu.name}. Seed ${state.seed}.`;
   } catch (err) {
     status.className = "status err";
     status.textContent = err.message;
@@ -538,19 +548,8 @@ async function runJob() {
 
 document.getElementById("run").onclick = () => { runJob(); };
 
-// Load the synthetic demo book, then run it once so Results fills on open.
-fetch("/api/sample")
-  .then(r => r.json())
-  .then(async data => {
-    state = data;
-    render();
-    await runJob();
-  })
-  .catch(err => {
-    const status = document.getElementById("status");
-    status.className = "status err";
-    status.textContent = "Could not load demo book: " + err.message;
-  });
+// First paint is also a fresh book, same as clicking Run.
+runJob();
 </script>
 </body>
 </html>

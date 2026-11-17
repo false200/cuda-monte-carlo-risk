@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 
 MAX_UNDERLYINGS = 16
 MAX_POSITIONS = 64
@@ -45,6 +46,102 @@ def sample_portfolio() -> dict:
             "quantity": 1,
         },
     }
+
+
+# Illustrative ranges only. Nothing here is a live quote.
+_UNIVERSE = (
+    ("SPX", 4200.0, 6200.0),
+    ("AAPL", 140.0, 260.0),
+    ("MSFT", 280.0, 480.0),
+    ("NVDA", 80.0, 180.0),
+    ("XOM", 80.0, 140.0),
+    ("JPM", 140.0, 240.0),
+    ("GLD", 160.0, 260.0),
+    ("TLT", 80.0, 120.0),
+)
+
+
+def _random_correlation(n: int, rng: random.Random) -> list[list[float]]:
+    """Correlation from a Gaussian Gram matrix. Full rank keeps it positive definite."""
+    draws = [[rng.gauss(0.0, 1.0) for _ in range(n)] for _ in range(n)]
+    gram = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1):
+            gram[i][j] = sum(draws[i][k] * draws[j][k] for k in range(n))
+            gram[j][i] = gram[i][j]
+    scale = [math.sqrt(gram[i][i]) for i in range(n)]
+    corr: list[list[float]] = []
+    for i in range(n):
+        row = []
+        for j in range(n):
+            row.append(1.0 if i == j else gram[i][j] / (scale[i] * scale[j]))
+        corr.append(row)
+    return corr
+
+
+def random_portfolio(rng: random.Random | None = None, paths: int | None = None) -> dict:
+    """A new synthetic book. `paths` is kept when the caller already chose a size."""
+    rng = rng or random.Random()
+    picked = rng.sample(_UNIVERSE, rng.randint(3, 5))
+    underlyings = []
+    for name, lo, hi in picked:
+        spot = round(rng.uniform(lo, hi), 2)
+        vol = round(rng.uniform(0.12, 0.45), 4)
+        rate = round(rng.uniform(0.02, 0.07), 4)
+        dividend = round(rng.uniform(0.0, min(0.04, rate)), 4)
+        underlyings.append(
+            {
+                "name": name,
+                "spot": spot,
+                "vol": vol,
+                "rate": rate,
+                "dividend": dividend,
+                "drift": round(rate - dividend, 4),
+            }
+        )
+    horizon_days = rng.choice((1, 1, 1, 5, 10))
+    horizon_years = horizon_days / 252.0
+    positions = []
+    for underlying in underlyings:
+        equity_qty = rng.choice((5, 8, 10, 15, 20, 25, 40)) * rng.choice((1, 1, -1))
+        positions.append({"underlying": underlying["name"], "kind": "equity", "quantity": equity_qty})
+        if rng.random() < 0.75:
+            positions.append(
+                {
+                    "underlying": underlying["name"],
+                    "kind": rng.choice(("call", "put")),
+                    "strike": round(underlying["spot"] * rng.uniform(0.85, 1.15), 2),
+                    "maturity_years": round(rng.uniform(max(0.15, horizon_years + 0.05), 1.5), 2),
+                    "quantity": rng.choice((2, 4, 10, 20, 30)) * rng.choice((1, -1)),
+                }
+            )
+    asian_name = rng.choice(underlyings)
+    corr = _random_correlation(len(underlyings), rng)
+    for _ in range(6):
+        if _cholesky_ok(corr):
+            break
+        corr = _random_correlation(len(underlyings), rng)
+    else:
+        n = len(underlyings)
+        corr = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+    chosen_paths = 10_000_000 if paths is None else int(paths)
+    job = {
+        "seed": rng.randint(1, 2_000_000_000),
+        "paths": chosen_paths,
+        "bench_paths": min(chosen_paths, 1_000_000),
+        "horizon_days": horizon_days,
+        "underlyings": underlyings,
+        "correlation": corr,
+        "positions": positions,
+        "asian": {
+            "underlying": asian_name["name"],
+            "strike": round(asian_name["spot"] * rng.uniform(0.9, 1.1), 2),
+            "maturity_years": round(rng.uniform(0.5, 1.5), 2),
+            "steps": rng.choice((16, 32, 64)),
+            "quantity": rng.choice((1, 2, 5)),
+        },
+    }
+    return validate(job)
 
 
 def _num(value, field: str) -> float:

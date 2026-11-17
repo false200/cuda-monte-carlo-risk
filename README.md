@@ -27,7 +27,7 @@ How that instance was brought up:
 3. `docker run --gpus all -p 8765:8765 ...` with the dashboard entrypoint.
 4. Open the public URL on port **8765**.
 
-The dashboard loads the synthetic sample book from `GET /api/sample` and can auto-run it on open.
+The dashboard draws a new synthetic book from `GET /api/random` on every Run click (and on first load) and prices that book. The fixed example in `GET /api/sample` is unchanged. The scenario count stays on the preset you picked.
 
 ### Local path (measured results)
 
