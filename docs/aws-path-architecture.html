@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proposed AWS Batch path</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; }
+  body {
+    width: 1600px;
+    height: 900px;
+    padding: 28px 36px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    color: #1f2937;
+  }
+  h1 { margin: 0; font-size: 34px; font-weight: 700; }
+  .sub { margin: 8px 0 22px; color: #6b7280; font-size: 16px; max-width: 1500px; }
+  .row { display: flex; gap: 18px; align-items: stretch; }
+  .col { display: flex; flex-direction: column; gap: 14px; }
+  .card {
+    border-radius: 16px;
+    border: 2px solid #cbd5e1;
+    padding: 14px 16px;
+    min-height: 132px;
+    background: #fff;
+  }
+  .card h2 { margin: 0 0 8px; font-size: 20px; }
+  .card p { margin: 0 0 4px; font-size: 15px; line-height: 1.35; }
+  .note { font-weight: 700; color: #b45309; }
+  .orange { background: #fff7ed; border-color: #fdba74; }
+  .orange h2 { color: #9a3412; }
+  .yellow { background: #fefce8; border-color: #fde047; }
+  .yellow h2 { color: #854d0e; }
+  .green { background: #ecfdf5; border-color: #6ee7b7; }
+  .green h2 { color: #065f46; }
+  .blue { background: #eff6ff; border-color: #93c5fd; }
+  .blue h2 { color: #1e3a8a; }
+  .purple { background: #f5f3ff; border-color: #c4b5fd; }
+  .purple h2 { color: #5b21b6; }
+  .slate { background: #f8fafc; border-color: #cbd5e1; }
+  .slate h2 { color: #334155; }
+  .muted { background: #f1f5f9; border-color: #94a3b8; }
+  .flow {
+    display: grid;
+    grid-template-columns: 1.05fr 28px 1.15fr 28px 1fr;
+    grid-template-rows: auto 28px auto 28px auto;
+    align-items: stretch;
+    margin-top: 8px;
+  }
+  .a1 { grid-column: 1; grid-row: 1; }
+  .a2 { grid-column: 3; grid-row: 1; }
+  .a3 { grid-column: 5; grid-row: 1; }
+  .a4 { grid-column: 3; grid-row: 3; }
+  .a5 { grid-column: 5; grid-row: 3; }
+  .a6 { grid-column: 3; grid-row: 5; }
+  .arr-h {
+    grid-row: 1;
+    display: flex; align-items: center; justify-content: center;
+    color: #64748b; font-size: 12px; font-weight: 600; text-align: center;
+  }
+  .arr12 { grid-column: 2; }
+  .arr23 { grid-column: 4; }
+  .arr-v {
+    display: flex; align-items: center; justify-content: center;
+    color: #64748b; font-size: 12px; font-weight: 600; text-align: center;
+  }
+  .arr24 { grid-column: 3; grid-row: 2; }
+  .arr45 { grid-column: 4; grid-row: 3; }
+  .arr43 { grid-column: 5; grid-row: 2; }
+  .arr46 { grid-column: 3; grid-row: 4; }
+  .arrow { font-size: 22px; line-height: 1; }
+  .bottom {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 22px;
+  }
+  .legend {
+    margin-top: 16px;
+    font-size: 14px;
+    color: #475569;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 12px;
+  }
+</style>
+</head>
+<body>
+  <h1>Proposed AWS Batch path</h1>
+  <div class="sub">Source in aws/ and docker/. Designed in SAM. This Batch stack was not deployed. Live demo is a separate EC2 dashboard VM.</div>
+
+  <div class="flow">
+    <div class="card orange a1">
+      <h2>1 · Amazon API Gateway</h2>
+      <p>HTTP API</p>
+      <p>POST /jobs</p>
+      <p>GET /jobs/{job_id}</p>
+      <p>aws/template.yaml</p>
+    </div>
+
+    <div class="arr-h arr12"><div><div class="arrow">→</div>invoke</div></div>
+
+    <div class="card yellow a2">
+      <h2>2 · AWS Lambda</h2>
+      <p>python3.12 · handler.py</p>
+      <p>256 MB · 30 s</p>
+      <p>validate + write S3 + SubmitJob</p>
+      <p class="note">does NOT run CUDA</p>
+    </div>
+
+    <div class="arr-h arr23"><div><div class="arrow">→</div>put job.txt</div></div>
+
+    <div class="card green a3">
+      <h2>3 · Amazon S3</h2>
+      <p>jobs/ prefix</p>
+      <p>AES256 · 14-day expiry</p>
+      <p>job.txt + result.json</p>
+    </div>
+
+    <div class="arr-v arr24"><div>SubmitJob / DescribeJobs<br><span class="arrow">↓</span></div></div>
+    <div class="arr-v arr43"><div>write result.json<br><span class="arrow">↑</span></div></div>
+
+    <div class="card blue a4">
+      <h2>4 · AWS Batch</h2>
+      <p>spot queue</p>
+      <p>g4dn.xlarge / g5.xlarge</p>
+      <p>runs same mc_engine on GPU</p>
+    </div>
+
+    <div class="arr-h arr45"><div><div class="arrow">←</div>pull image</div></div>
+
+    <div class="card purple a5">
+      <h2>5 · Amazon ECR</h2>
+      <p>docker/Dockerfile</p>
+      <p>CUDA image + mc_engine</p>
+      <p>pulled by Batch workers</p>
+    </div>
+
+    <div class="arr-v arr46"><div><span class="arrow">↓</span><br>launches GPU hosts</div></div>
+
+    <div class="card slate a6">
+      <h2>6 · Amazon EC2</h2>
+      <p>Batch GPU hosts only</p>
+      <p>spot g4dn / g5</p>
+      <p class="note">not the dashboard VM</p>
+    </div>
+  </div>
+
+  <div class="bottom">
+    <div class="card muted">
+      <h2>AWS IAM</h2>
+      <p>Lambda, Batch, and EC2 instance roles</p>
+    </div>
+    <div class="card muted">
+      <h2>Amazon VPC</h2>
+      <p>subnets + security groups for Batch GPU instances</p>
+    </div>
+  </div>
+
+  <div class="legend">
+    Correct flow: API Gateway → Lambda → (S3 job files + Batch SubmitJob) → Batch pulls image from ECR → Batch GPU on EC2 writes result.json to S3.
+  </div>
+</body>
+</html>

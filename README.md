@@ -1,8 +1,45 @@
 # GPU Monte Carlo Risk Engine
 
-A local GPU Monte Carlo risk engine. Custom CUDA kernels price a synthetic book of equities and European options, then revalue that book under correlated geometric Brownian motion and return Value-at-Risk and expected shortfall. It was built and run on one Windows workstation. No model is trained.
+Custom CUDA kernels price a synthetic book of equities and European options, revalue that book under correlated geometric Brownian motion, and return Value-at-Risk and expected shortfall. No model is trained. Default demo size is **10 million** scenarios (presets: 1M / 10M / 100M).
 
-The longer write-up is in [architecture.md](architecture.md).
+The longer method write-up is in [architecture.md](architecture.md). A slide-ready Batch diagram is in [docs/aws-path-architecture.png](docs/aws-path-architecture.png) (proposed path only).
+
+## Architecture (what is live)
+
+### Live path (deployed)
+
+One GPU EC2 instance runs the whole app in Docker. ECR, Lambda, API Gateway, and Batch are **not** used in this path.
+
+```text
+Browser
+  -> http://<ec2-public-ip>:8765
+  -> Docker on EC2 g4dn.xlarge (Tesla T4)
+       dashboard/server.py  (MC_HOST=0.0.0.0)
+       -> /opt/mc_engine + kernels/mc_risk.cu  (NVRTC)
+       -> GPU
+  -> result JSON back to the page
+```
+
+How that instance was brought up:
+
+1. Copy this repo onto the EC2 box.
+2. `docker build -f docker/Dockerfile -t mc-risk .` **on the instance** (image stays in local Docker; not pushed to ECR).
+3. `docker run --gpus all -p 8765:8765 ...` with the dashboard entrypoint.
+4. Open the public URL on port **8765**.
+
+The dashboard loads the synthetic sample book from `GET /api/sample` and can auto-run it on open.
+
+### Local path (measured results)
+
+```text
+Browser -> dashboard/server.py on 127.0.0.1:8765 -> build/mc_engine -> workstation GPU
+```
+
+Timed figures in this README are from an RTX 3050 Laptop unless noted.
+
+### Proposed path (source only, not deployed)
+
+`aws/` + `docker/` describe API Gateway → Lambda (validate / enqueue, **no CUDA**) → S3 → Batch spot `g4dn`/`g5` → ECR image with the same `mc_engine`. That SAM stack was **not** deployed. The live demo is the single EC2 + Docker path above.
 
 ## Synthetic dataset
 
@@ -15,74 +52,72 @@ The sample portfolio is synthetic. Spots, volatilities, dividends, rates, drifts
 | XOM | 110 | 22% | 3.2% |
 | GLD | 180 | 14% | 0% |
 
-The rate on every name is 4.5%. Drift is rate minus dividend. Seed is 42. Correlation is typed in the same function. Positions are long 8 SPX, short 4 SPX 5000 puts, long 30 AAPL 200 calls, long 20 AAPL 170 puts, long 40 XOM, and long 25 GLD, plus one synthetic AAPL Asian. The dashboard form starts from this book. Edited numbers stay synthetic inputs. They are still not a market feed.
+The rate on every name is 4.5%. Drift is rate minus dividend. Seed is 42. Default `paths` is **10,000,000**. Positions are long 8 SPX, short 4 SPX 5000 puts, long 30 AAPL 200 calls and 20 AAPL 170 puts, long 40 XOM and 25 GLD, plus one synthetic AAPL Asian.
 
-## What runs
+## What the engine does
 
-```text
-Browser -> dashboard/server.py on 127.0.0.1:8765 -> build/mc_engine.exe -> GPU
-```
-
-- Hand-written CUDA kernels in `kernels/mc_risk.cu`. Pricing does not call cuRAND or a vendor pricing library.
-- Philox4x32-10, checked against the published test vectors on the CPU and the GPU.
+- Hand-written CUDA in `kernels/mc_risk.cu`. No cuRAND, no vendor pricer.
+- Philox4x32-10, checked against published test vectors on CPU and GPU.
 - European prices use antithetic variates and are checked against Black-Scholes.
-- Portfolio scenarios use a Cholesky factor, then a full revaluation. VaR and expected shortfall come from a GPU histogram.
+- Portfolio scenarios use a Cholesky factor, then a full revaluation. VaR and ES come from a GPU 4096-bin histogram.
 - One arithmetic Asian uses a geometric Asian control variate.
 - A multi-threaded CPU baseline reports the speedup.
-- The host finds `kernels/mc_risk.cu` and NVRTC from the executable location, `NVRTC_PATH`, or `CUDA_PATH`. Paths are not tied to a drive letter.
+- Host compiles kernels at runtime with **NVRTC** (cubin/PTX cache beside the binary).
 
 ## Requirements
 
 | Tool | Used for |
 | --- | --- |
 | 64-bit MinGW-w64 `gcc` | Windows host build. Set `CC` if it is not on `PATH`. |
-| Python 3.9 or newer | Dashboard, job validation, and the NVRTC wheel install. |
-| NVIDIA driver and GPU | Local runs. The build downloads the NVRTC redistributable into `.cuda_pkgs` when `nvcc` is not installed. |
+| Python 3.9 or newer | Dashboard and job validation. |
+| NVIDIA driver and GPU | Local or EC2 GPU runs. |
+| Docker + NVIDIA Container Toolkit | EC2 live demo image. |
 
-## Quick start
-
-From the repository root:
+## Quick start (local Windows)
 
 ```powershell
 powershell -File .\build.ps1
 powershell -File .\run_dashboard.ps1
 ```
 
-Open http://127.0.0.1:8765. The synthetic book can be run at 1 million, 10 million, or 100 million scenarios.
-
-`build.ps1` resolves the repository from its own path. Compiler output, pip cache, and temporary files stay in `build\`, `.cache\`, and `tmp\` inside that repository. Those directories are gitignored.
-
-Run the engine directly:
+Open http://127.0.0.1:8765.
 
 ```powershell
 .\build\mc_engine.exe selftest
 .\build\mc_engine.exe run .\path\to\job.txt .\path\to\result.json
 ```
 
-## Configuration
+## EC2 + Docker (live style)
+
+On a Deep Learning GPU AMI (`g4dn.xlarge` or similar), after the repo is on the box:
+
+```bash
+cd ~/HPC_L2
+sudo docker build -f docker/Dockerfile -t mc-risk .
+sudo docker run -d --name mc-risk --gpus all -p 8765:8765 --restart unless-stopped \
+  -e MC_HOST=0.0.0.0 -e MC_PORT=8765 -e MC_ENGINE=/opt/mc_engine \
+  --entrypoint python3 mc-risk /opt/dashboard/server.py
+```
+
+Open `http://<public-ip>:8765`. Security group needs TCP **22** (SSH) and **8765** (dashboard).
 
 | Variable | Meaning |
 | --- | --- |
-| `CC` | 64-bit `gcc` used by `build.ps1`. |
-| `MC_KERNEL` | Path to `mc_risk.cu`. Default: next to the repo, or beside the binary. |
-| `NVRTC_PATH` | `nvrtc64_*.dll` or `libnvrtc.so.12`. Default: `.cuda_pkgs`, then `CUDA_PATH`. |
-| `CUDA_PATH` | CUDA toolkit root. Its `bin` directory is searched for NVRTC. |
+| `MC_HOST` | Bind address. Use `0.0.0.0` on EC2. Default `127.0.0.1`. |
+| `MC_PORT` | HTTP port. Default `8765`. |
+| `MC_ENGINE` | Path to `mc_engine` binary inside the container. |
+| `MC_KERNEL` | Path to `mc_risk.cu`. |
+| `NVRTC_PATH` | NVRTC library path. |
 
 ## Model
 
-Prices follow geometric Brownian motion. European payoffs use antithetic normals and continuous discounting at the risk-free rate.
+Prices follow geometric Brownian motion. One trading day is `1/252` of a year. Equities are marked at the simulated spot; options are Black-Scholes with remaining maturity. VaR is the loss at the 95% and 99% P&L quantiles. Expected shortfall is the average P&L inside that tail.
 
-Each portfolio scenario applies the Cholesky factor of the correlation matrix, steps every underlying to the horizon, and revalues the book. Equities are marked at the simulated spot. Options are Black-Scholes with the remaining maturity. One trading day is `1/252` of a year.
-
-VaR is the loss at the 95% and 99% P&L quantiles. Expected shortfall is the average P&L inside that tail. A negative VaR means that tail is still a gain.
-
-## In the tree, not run
-
-`aws/` holds a Lambda handler and a SAM template. `docker/` holds a Dockerfile and an entrypoint. `build.ps1` copies the handler into `lambda_pkg\`. No container was built, no stack was deployed, and no Batch job was submitted. The dashboard cost column multiplies the local GPU seconds by published on-demand list rates (`g4dn.xlarge` at `$0.526/hour`, `g5.xlarge` at `$1.006/hour`). That column is arithmetic in the page. It is not a measured cloud bill.
+The dashboard cost column multiplies measured GPU seconds by published us-east-1 on-demand list rates (`g4dn.xlarge` / `g5.xlarge`). That column is an estimate, not a bill.
 
 ## Example results
 
-These figures are from one workstation run of the synthetic book on an NVIDIA GeForce RTX 3050 Laptop. They are a reference, not a performance guarantee.
+Workstation reference: NVIDIA GeForce RTX 3050 Laptop.
 
 | Check | Result |
 | --- | --- |
@@ -91,21 +126,23 @@ These figures are from one workstation run of the synthetic book on an NVIDIA Ge
 | 95% / 99% VaR | 853.34 / 1,211.44 |
 | 99% expected shortfall | 1,390.12 |
 | GPU job time | 8.39 s |
-| European pricing | 278 million paths/s, about 8.5× a 12-thread CPU |
-| Scenario revaluation | 25.6 million paths/s |
+| European pricing | ~278 million paths/s, about 8.5× a 12-thread CPU |
+| Scenario revaluation | ~25.6 million paths/s |
 
-Option Monte Carlo prices fell inside the Black-Scholes 95% confidence interval. The geometric Asian matched its closed form.
+A live smoke run on EC2 `g4dn.xlarge` (Tesla T4) completed a 1 million path book successfully with the same engine binary in Docker.
 
 ## Layout
 
 | Path | Role |
 | --- | --- |
-| `architecture.md` | Method, kernels, synthetic book, and measured local results |
+| `architecture.md` | Method, kernels, synthetic book, measured local results |
 | `kernels/mc_risk.cu` | RNG, European pricing, scenario VaR, Asian control variate |
 | `src/engine.c` | Driver API host, CPU baseline, JSON writer |
-| `dashboard/` | Browser and local API |
-| `common/jobtext.py` | Synthetic sample book, validation, and the job text format |
-| `aws/` | Lambda handler and SAM template. Present, not deployed |
-| `docker/` | Dockerfile and entrypoint. Present, image not built |
-| `build.ps1` | Locate a 64-bit compiler, fetch NVRTC if needed, build, self-test |
-This was developed by Aejaz
+| `dashboard/` | Browser UI and Python API |
+| `common/jobtext.py` | Sample book, validation, job text format |
+| `docker/` | Dockerfile, Batch entrypoint, dashboard serve helper |
+| `aws/` | Lambda + SAM template for Batch. Designed, not deployed |
+| `docs/` | Architecture diagrams for slides |
+| `build.ps1` | Windows build and self-test |
+
+This was developed by Aejaz.

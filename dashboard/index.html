@@ -146,7 +146,7 @@
 <header>
   <div>
     <h1>Monte Carlo <span>risk engine</span></h1>
-    <div class="sub">CUDA kernels price options and revalue a correlated book. The same engine binary is what an AWS Batch GPU container runs.</div>
+    <div class="sub">CUDA kernels price options and revalue a correlated book. Demo book loads and runs automatically (10 million scenarios by default).</div>
   </div>
   <div class="badge" id="gpu-badge">GPU idle</div>
 </header>
@@ -193,7 +193,7 @@
   </section>
   <section>
     <h2>Results</h2>
-    <div id="empty">Submit the book. A 10 million path run is usually about a second on this GPU. 100 million is the full demo.</div>
+    <div id="empty">Loading the demo book and running it on the GPU…</div>
     <div id="results" hidden>
       <div class="cards" id="cards"></div>
       <div class="charts">
@@ -511,7 +511,7 @@ function show(result) {
     "<br><b>AWS path.</b> Dashboard → API Gateway → Lambda validates and writes S3 → Batch spot queue → g4dn or g5 runs this same engine in Docker.";
 }
 
-document.getElementById("run").onclick = async () => {
+async function runJob() {
   scrape();
   const btn = document.getElementById("run");
   const status = document.getElementById("status");
@@ -534,9 +534,23 @@ document.getElementById("run").onclick = async () => {
   } finally {
     btn.disabled = false;
   }
-};
+}
 
-fetch("/api/sample").then(r => r.json()).then(data => { state = data; render(); });
+document.getElementById("run").onclick = () => { runJob(); };
+
+// Load the synthetic demo book, then run it once so Results fills on open.
+fetch("/api/sample")
+  .then(r => r.json())
+  .then(async data => {
+    state = data;
+    render();
+    await runJob();
+  })
+  .catch(err => {
+    const status = document.getElementById("status");
+    status.className = "status err";
+    status.textContent = "Could not load demo book: " + err.message;
+  });
 </script>
 </body>
 </html>
