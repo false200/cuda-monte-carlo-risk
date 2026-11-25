@@ -144,5 +144,3 @@ A live smoke run on EC2 `g4dn.xlarge` (Tesla T4) completed a 1 million path book
 | `aws/` | Lambda + SAM template for Batch. Designed, not deployed |
 | `docs/` | Architecture diagrams for slides |
 | `build.ps1` | Windows build and self-test |
-
-This was developed by Aejaz.
